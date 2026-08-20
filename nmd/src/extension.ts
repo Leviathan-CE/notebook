@@ -17,16 +17,35 @@ export function activate(context: vscode.ExtensionContext): void {
       await vscode.window.showNotebookDocument(document);
     }),
     vscode.commands.registerCommand("nmd.insertInkCell", async () => {
-      const editor = vscode.window.activeNotebookEditor;
-      if (!editor || editor.notebook.notebookType !== NMD_NOTEBOOK_TYPE) {
-        await vscode.window.showWarningMessage("Open an NMD notebook first.");
-        return;
+      const editor = await requireNmdEditor();
+      if (editor) {
+        await insertInkCell(editor);
       }
-      await insertInkCell(editor);
+    }),
+    vscode.commands.registerCommand("nmd.insertInkCellAtTop", async () => {
+      const editor = await requireNmdEditor();
+      if (editor) {
+        await insertInkCell(editor, 0);
+      }
+    }),
+    vscode.commands.registerCommand("nmd.insertInkCellInline", async () => {
+      const editor = await requireNmdEditor();
+      if (editor) {
+        await insertInkCell(editor);
+      }
     }),
   );
 
   registerInkRuntime(context);
+}
+
+async function requireNmdEditor(): Promise<vscode.NotebookEditor | undefined> {
+  const editor = vscode.window.activeNotebookEditor;
+  if (!editor || editor.notebook.notebookType !== NMD_NOTEBOOK_TYPE) {
+    await vscode.window.showWarningMessage("Open an NMD notebook first.");
+    return undefined;
+  }
+  return editor;
 }
 
 export function deactivate(): void {

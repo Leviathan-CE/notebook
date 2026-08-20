@@ -8,7 +8,6 @@ import {
   isInkUpdateMessage,
   NMD_INK_CELL_STUB,
   NMD_INK_LANGUAGE,
-  NMD_INK_MIME,
   NMD_INK_RENDERER_ID,
   NMD_NOTEBOOK_TYPE,
   NMD_PYTHON_LANGUAGE,
@@ -102,21 +101,39 @@ export function registerInkRuntime(context: vscode.ExtensionContext): vscode.Not
   return controller;
 }
 
-export async function insertInkCell(editor: vscode.NotebookEditor): Promise<void> {
+export async function insertInkCell(editor: vscode.NotebookEditor, index?: number): Promise<void> {
   const cellId = crypto.randomUUID();
   const source = emptyInkSource();
   const cell = new vscode.NotebookCellData(vscode.NotebookCellKind.Code, NMD_INK_CELL_STUB, NMD_INK_LANGUAGE);
   cell.metadata = inkMetadata(cellId, source);
   cell.outputs = [inkOutput(cellId, source)];
 
-  const index =
-    editor.selection.start === editor.selection.end
+  const insertAt =
+    index ??
+    (editor.selection.start === editor.selection.end
       ? Math.min(editor.selection.end + 1, editor.notebook.cellCount)
-      : editor.selection.end;
+      : editor.selection.end);
 
   const edit = new vscode.WorkspaceEdit();
-  edit.set(editor.notebook.uri, [vscode.NotebookEdit.insertCells(index, [cell])]);
-  await vscode.workspace.applyEdit(edit);
+  edit.set(editor.notebook.uri, [vscode.NotebookEdit.insertCells(insertAt, [cell])]);
+  const applied = await vscode.workspace.applyEdit(edit);
+  if (!applied || insertAt >= editor.notebook.cellCount) {
+    return;
+  }
+
+  const range = new vscode.NotebookRange(insertAt, insertAt + 1);
+  editor.selection = range;
+  editor.revealRange(range, vscode.NotebookEditorRevealType.Default);
+
+  // Execute so the custom renderer actually mounts, then hide the empty source editor.
+  await vscode.commands.executeCommand("notebook.cell.execute", {
+    ranges: [{ start: insertAt, end: insertAt + 1 }],
+    document: editor.notebook.uri,
+  });
+  await vscode.commands.executeCommand("notebook.cell.collapseCellInput", {
+    ranges: [{ start: insertAt, end: insertAt + 1 }],
+    document: editor.notebook.uri,
+  });
 }
 
 async function persistInkUpdate(
@@ -144,10 +161,7 @@ async function ensureInkCell(controller: vscode.NotebookController, cell: vscode
     await vscode.workspace.applyEdit(edit);
   }
 
-  const hasInkOutput = cell.outputs.some((output) => output.items.some((item) => item.mime === NMD_INK_MIME));
-  if (!hasInkOutput) {
-    await renderInkOutput(controller, cell, cellId, source);
-  }
+  await renderInkOutput(controller, cell, cellId, source);
 }
 
 async function renderInkOutput(

@@ -75,8 +75,16 @@
       },
       {
         "command": "nmd.insertInkCell",
-        "title": "NMD: Insert Ink Cell",
-        "icon": "$(pencil)"
+        "title": "Add Ink",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nmd.insertInkCellAtTop",
+        "title": "$(add) Add Ink"
+      },
+      {
+        "command": "nmd.insertInkCellInline",
+        "title": "$(add) Add Ink"
       },
       {
         "command": "nmd.restartPython",
@@ -92,11 +100,35 @@
       }
     ],
     "menus": {
+      "notebook/cell/listTop": [
+        {
+          "command": "nmd.insertInkCellAtTop",
+          "when": "notebookType == nmd-notebook && notebookEditable",
+          "group": "inline@2"
+        }
+      ],
+      "notebook/cell/between": [
+        {
+          "command": "nmd.insertInkCellInline",
+          "when": "notebookType == nmd-notebook && notebookEditable",
+          "group": "inline@2"
+        }
+      ],
       "notebook/toolbar": [
         {
           "command": "nmd.insertInkCell",
-          "when": "notebookType == nmd-notebook",
-          "group": "navigation"
+          "when": "notebookType == nmd-notebook && notebookEditable",
+          "group": "navigation/add@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "nmd.insertInkCellAtTop",
+          "when": "false"
+        },
+        {
+          "command": "nmd.insertInkCellInline",
+          "when": "false"
         }
       ]
     }
@@ -106,7 +138,8 @@
     "bundle-renderer": "esbuild src/renderer/ink.ts --bundle --format=esm --outfile=out/renderer/ink.js",
     "watch": "tsc -watch -p .",
     "test": "npm run compile && node out/test-format.js",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "install-extension": "bash ./install.sh"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
