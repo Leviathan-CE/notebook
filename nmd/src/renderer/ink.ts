@@ -8,6 +8,21 @@ import {
 } from "../format";
 import { isInkUndoMessage, type NmdInkSource, type NmdPoint, type NmdStroke, type NmdTool } from "../types";
 
+type ActiveTool = NmdTool | "select";
+type SelectMode = "idle" | "marquee" | "move";
+
+interface NormalizedRect {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+interface SelectionView {
+  selectedIndices: ReadonlySet<number>;
+  marquee: NormalizedRect | null;
+}
+
 interface InkPayload extends NmdInkSource {
   id: string;
 }
@@ -24,6 +39,7 @@ const PEN_SIZE_MIN = 1;
 const PEN_SIZE_MAX = 48;
 const ERASER_SIZE_MIN = 4;
 const ERASER_SIZE_MAX = 80;
+const MARQUEE_MIN_SIZE = 0.006;
 
 export const activate: ActivationFunction = (context) => {
   const undoByCell = new Map<string, () => void>();
@@ -37,19 +53,31 @@ export const activate: ActivationFunction = (context) => {
 
   return {
     renderOutputItem(outputItem, element) {
-      const payload = readPayload(outputItem);
+      let payload: InkPayload;
+      try {
+        payload = readPayload(outputItem);
+      } catch (error) {
+        renderInkError(element, error);
+        return;
+      }
+
       if (!payload?.id) {
         element.textContent = "Ink cell is missing an id.";
         return;
       }
-      const undo = mountCanvas(element, payload, (source) => {
-        context.postMessage?.({
-          type: "ink-update",
-          cellId: payload.id,
-          source,
+
+      try {
+        const undo = mountCanvas(element, payload, (source) => {
+          context.postMessage?.({
+            type: "ink-update",
+            cellId: payload.id,
+            source,
+          });
         });
-      });
-      undoByCell.set(payload.id, undo);
+        undoByCell.set(payload.id, undo);
+      } catch (error) {
+        renderInkFallback(element, payload, error);
+      }
     },
   };
 };
@@ -60,6 +88,58 @@ function readPayload(outputItem: { json: () => unknown; text: () => string }): I
   } catch {
     return JSON.parse(outputItem.text()) as InkPayload;
   }
+}
+
+function renderInkError(element: HTMLElement, error: unknown): void {
+  element.innerHTML = "";
+  const root = document.createElement("div");
+  root.className = "nmd-ink-error";
+  const title = document.createElement("p");
+  title.textContent = "NMD ink could not read this cell.";
+  const detail = document.createElement("pre");
+  detail.textContent = error instanceof Error ? error.message : String(error);
+  root.append(title, detail);
+  element.append(styleTag(), root);
+}
+
+function renderInkFallback(element: HTMLElement, payload: InkPayload, error: unknown): void {
+  element.innerHTML = "";
+  const root = document.createElement("div");
+  root.className = "nmd-ink-fallback";
+
+  const banner = document.createElement("div");
+  banner.className = "nmd-ink-fallback-banner";
+  banner.textContent = "Interactive ink failed to load. Showing a read-only preview.";
+  const detail = document.createElement("pre");
+  detail.textContent = error instanceof Error ? error.message : String(error);
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "nmd-ink-fallback-canvas";
+
+  root.append(banner, detail, canvas);
+  element.append(styleTag(), root);
+
+  const aspect = clampInkAspect(payload.aspect > 0 ? payload.aspect : 1.6);
+  const strokes = structuredClone(payload.strokes ?? []);
+  const draw = () => {
+    const width = Math.max(root.clientWidth, 1);
+    const height = Math.max(width / aspect, 1);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    redraw(ctx, strokes, width, height, { selectedIndices: new Set(), marquee: null });
+  };
+
+  const observer = new ResizeObserver(() => draw());
+  observer.observe(root);
+  draw();
 }
 
 function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source: NmdInkSource) => void): () => void {
@@ -73,6 +153,7 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
 
   const penButton = toolButton("Pen");
   const eraserButton = toolButton("Eraser");
+  const selectButton = toolButton("Select");
   const undoButton = toolButton("Undo");
   const clearButton = toolButton("Clear");
 
@@ -100,7 +181,7 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
   pickerWrap.append(picker);
   colors.append(pickerWrap);
 
-  toolbar.append(penButton, eraserButton, colors, penSlider.row, eraserSlider.row, undoButton, clearButton);
+  toolbar.append(penButton, eraserButton, selectButton, colors, penSlider.row, eraserSlider.row, undoButton, clearButton);
 
   const stage = document.createElement("div");
   stage.className = "nmd-ink-stage";
@@ -117,23 +198,117 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
   root.append(toolbar, stage, resizeHandle);
   element.append(styleTag(), root);
 
-  let tool: NmdTool = "pen";
+  let tool: ActiveTool = "pen";
   let colorKey = "theme";
   let penSize = 8;
   let eraserSize = 24;
   let strokes: NmdStroke[] = structuredClone(payload.strokes ?? []);
   let current: NmdStroke | undefined;
+  let selectedIndices = new Set<number>();
+  let selectMode: SelectMode = "idle";
+  let marqueeStart: NmdPoint | undefined;
+  let marqueeCurrent: NmdPoint | undefined;
+  let selectDragPoint: NmdPoint | undefined;
+  let pointerDownHit: number | null = null;
+  let pointerDownShift = false;
   let aspect = clampInkAspect(payload.aspect > 0 ? payload.aspect : 1.6);
   let resizing = false;
   let resizeStartY = 0;
   let resizeStartHeight = 0;
   let resizeStartStrokes: NmdStroke[] = [];
+  let stopSelectTracking: () => void = () => {};
+  let usingRawUpdates = false;
+  let activePointerId: number | undefined;
 
-  const setTool = (next: NmdTool) => {
+  const setTool = (next: ActiveTool) => {
     tool = next;
     penButton.classList.toggle("active", tool === "pen");
     eraserButton.classList.toggle("active", tool === "eraser");
-    colors.classList.toggle("disabled", tool === "eraser");
+    selectButton.classList.toggle("active", tool === "select");
+    colors.classList.toggle("disabled", tool === "eraser" || tool === "select");
+    penSlider.row.classList.toggle("disabled", tool === "select");
+    eraserSlider.row.classList.toggle("disabled", tool === "select");
+  };
+
+  const canvasSize = () => ({
+    width: Math.max(root.clientWidth, 1),
+    height: Math.max(Math.max(root.clientWidth, 1) / aspect, 1),
+  });
+
+  const findStrokesInRect = (rect: NormalizedRect): Set<number> => {
+    const { width, height } = canvasSize();
+    const found = new Set<number>();
+    for (let index = 0; index < strokes.length; index += 1) {
+      const bounds = strokeBounds(strokes[index], width, height);
+      if (bounds && rectsIntersect(rect, bounds, width, height)) {
+        found.add(index);
+      }
+    }
+    return found;
+  };
+
+  const selectionUnionBounds = (): { x: number; y: number; w: number; h: number } | undefined => {
+    const { width, height } = canvasSize();
+    return unionBounds(selectedIndices, strokes, width, height);
+  };
+
+  const isPointInSelection = (point: NmdPoint): boolean => {
+    const bounds = selectionUnionBounds();
+    if (!bounds) {
+      return false;
+    }
+    const { width, height } = canvasSize();
+    const padding = 8;
+    const px = point.x * width;
+    const py = point.y * height;
+    return (
+      px >= bounds.x - padding &&
+      px <= bounds.x + bounds.w + padding &&
+      py >= bounds.y - padding &&
+      py <= bounds.y + bounds.h + padding
+    );
+  };
+
+  const activeMarquee = (): NormalizedRect | null => {
+    if (selectMode !== "marquee" || !marqueeStart || !marqueeCurrent) {
+      return null;
+    }
+    return normalizeRect(marqueeStart, marqueeCurrent);
+  };
+
+  const resetSelectInteraction = () => {
+    stopSelectTracking();
+    selectMode = "idle";
+    marqueeStart = undefined;
+    marqueeCurrent = undefined;
+    selectDragPoint = undefined;
+    pointerDownHit = null;
+    pointerDownShift = false;
+    activePointerId = undefined;
+  };
+
+  const findStrokeAt = (nx: number, ny: number): number | null => {
+    const { width, height } = canvasSize();
+    for (let index = strokes.length - 1; index >= 0; index -= 1) {
+      if (hitTestStroke(strokes[index], nx, ny, width, height)) {
+        return index;
+      }
+    }
+    return null;
+  };
+
+  const applySelection = (next: Set<number>, shift: boolean) => {
+    if (shift) {
+      for (const index of next) {
+        if (selectedIndices.has(index)) {
+          selectedIndices.delete(index);
+        } else {
+          selectedIndices.add(index);
+        }
+      }
+      return;
+    }
+    selectedIndices = next;
   };
 
   const setColor = (value: string) => {
@@ -159,6 +334,24 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
       hideCursor();
       return;
     }
+    if (tool === "select") {
+      hideCursor();
+      if (selectMode === "move") {
+        canvas.style.cursor = "grabbing";
+        return;
+      }
+      if (selectMode === "marquee") {
+        canvas.style.cursor = "crosshair";
+        return;
+      }
+      const point = pointFromEvent(event);
+      if (selectedIndices.size > 0 && isPointInSelection(point)) {
+        canvas.style.cursor = "grab";
+        return;
+      }
+      canvas.style.cursor = "crosshair";
+      return;
+    }
     const bounds = canvas.getBoundingClientRect();
     const pressure = event.buttons > 0 ? pressureFromEvent(event) : 1;
     const diameter = currentSize() * pressure;
@@ -169,13 +362,15 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
     cursor.style.height = `${diameter}px`;
   };
 
-  const setToolAndCursor = (next: NmdTool) => {
+  const setToolAndCursor = (next: ActiveTool) => {
+    resetSelectInteraction();
     setTool(next);
+    if (next === "select") {
+      canvas.style.cursor = "crosshair";
+      return;
+    }
     canvas.style.cursor = "none";
   };
-
-  setToolAndCursor("pen");
-  setColor("theme");
 
   const size = () => {
     const cssWidth = Math.max(root.clientWidth, 1);
@@ -190,7 +385,10 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
       return;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    redraw(ctx, strokes, cssWidth, cssHeight);
+    redraw(ctx, strokes, cssWidth, cssHeight, {
+      selectedIndices,
+      marquee: activeMarquee(),
+    });
   };
 
   const emit = () => persist({ aspect, strokes: structuredClone(strokes) });
@@ -230,9 +428,6 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
     appendPointerSamples(event, useCoalesced);
   };
 
-  let usingRawUpdates = false;
-  let activePointerId: number | undefined;
-
   const stopStrokeTracking = () => {
     window.removeEventListener("pointermove", onWindowMove, true);
     window.removeEventListener("pointerup", onWindowEnd, true);
@@ -269,14 +464,107 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
     endStroke(event);
   };
 
+  const stopSelectTrackingImpl = () => {
+    window.removeEventListener("pointermove", onSelectMove, true);
+    window.removeEventListener("pointerup", onSelectEnd, true);
+    window.removeEventListener("pointercancel", onSelectEnd, true);
+  };
+  stopSelectTracking = stopSelectTrackingImpl;
+
+  const onSelectMove = (event: PointerEvent) => {
+    if (event.pointerId !== activePointerId) {
+      return;
+    }
+    const point = pointFromEvent(event);
+    if (selectMode === "marquee") {
+      marqueeCurrent = point;
+      size();
+      updateCursor(event);
+      return;
+    }
+    if (selectMode !== "move" || !selectDragPoint || selectedIndices.size === 0) {
+      return;
+    }
+    const dx = point.x - selectDragPoint.x;
+    const dy = point.y - selectDragPoint.y;
+    if (dx === 0 && dy === 0) {
+      updateCursor(event);
+      return;
+    }
+    strokes = strokes.map((stroke, index) =>
+      selectedIndices.has(index) ? translateStroke(stroke, dx, dy) : stroke,
+    );
+    selectDragPoint = point;
+    size();
+    updateCursor(event);
+  };
+
+  const onSelectEnd = (event: PointerEvent) => {
+    if (event.pointerId !== activePointerId) {
+      return;
+    }
+
+    if (selectMode === "marquee" && marqueeStart && marqueeCurrent) {
+      const rect = normalizeRect(marqueeStart, marqueeCurrent);
+      const isTiny = rect.x2 - rect.x1 < MARQUEE_MIN_SIZE && rect.y2 - rect.y1 < MARQUEE_MIN_SIZE;
+      if (isTiny) {
+        if (pointerDownHit !== null) {
+          applySelection(new Set([pointerDownHit]), pointerDownShift);
+        } else if (!pointerDownShift) {
+          selectedIndices = new Set();
+        }
+      } else {
+        applySelection(findStrokesInRect(rect), pointerDownShift);
+      }
+    } else if (selectMode === "move") {
+      emit();
+    }
+
+    resetSelectInteraction();
+    size();
+    updateCursor(event);
+  };
+
   canvas.addEventListener("pointerdown", (event) => {
     if (resizing || !event.isPrimary) {
       return;
     }
     event.preventDefault();
+    canvas.focus({ preventScroll: true });
+
+    if (tool === "select") {
+      const point = pointFromEvent(event);
+      const hit = findStrokeAt(point.x, point.y);
+      pointerDownHit = hit;
+      pointerDownShift = event.shiftKey;
+      activePointerId = event.pointerId;
+
+      const canMove =
+        selectedIndices.size > 0 &&
+        ((hit !== null && selectedIndices.has(hit)) || isPointInSelection(point));
+
+      if (canMove) {
+        selectMode = "move";
+        selectDragPoint = point;
+      } else {
+        selectMode = "marquee";
+        marqueeStart = point;
+        marqueeCurrent = point;
+        if (!event.shiftKey) {
+          selectedIndices = new Set();
+        }
+      }
+
+      size();
+      updateCursor(event);
+      window.addEventListener("pointermove", onSelectMove, true);
+      window.addEventListener("pointerup", onSelectEnd, true);
+      window.addEventListener("pointercancel", onSelectEnd, true);
+      return;
+    }
+
     usingRawUpdates = false;
     activePointerId = event.pointerId;
-    canvas.focus({ preventScroll: true });
     current = {
       tool,
       color: resolveColor(colorKey),
@@ -358,7 +646,11 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
       activePointerId = undefined;
       stopStrokeTracking();
     }
+    if (selectMode !== "idle") {
+      resetSelectInteraction();
+    }
     strokes = strokes.slice(0, -1);
+    selectedIndices = new Set([...selectedIndices].filter((index) => index < strokes.length));
     size();
     emit();
   };
@@ -380,9 +672,12 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
 
   penButton.addEventListener("click", () => setToolAndCursor("pen"));
   eraserButton.addEventListener("click", () => setToolAndCursor("eraser"));
+  selectButton.addEventListener("click", () => setToolAndCursor("select"));
   undoButton.addEventListener("click", () => undoLast());
   clearButton.addEventListener("click", () => {
     strokes = [];
+    selectedIndices = new Set();
+    resetSelectInteraction();
     size();
     emit();
   });
@@ -412,13 +707,25 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
 
   const observer = new ResizeObserver(() => size());
   observer.observe(root);
+  setToolAndCursor("pen");
+  setColor("theme");
   size();
   return undoLast;
 }
 
-function redraw(ctx: CanvasRenderingContext2D, strokes: NmdStroke[], width: number, height: number): void {
+function redraw(
+  ctx: CanvasRenderingContext2D,
+  strokes: NmdStroke[],
+  width: number,
+  height: number,
+  selection: SelectionView,
+): void {
+  const focusColor =
+    getComputedStyle(document.documentElement).getPropertyValue("--vscode-focusBorder").trim() || "#007fd4";
+
   ctx.clearRect(0, 0, width, height);
-  for (const stroke of strokes) {
+  for (let index = 0; index < strokes.length; index += 1) {
+    const stroke = strokes[index];
     if (stroke.points.length === 0) {
       continue;
     }
@@ -432,6 +739,38 @@ function redraw(ctx: CanvasRenderingContext2D, strokes: NmdStroke[], width: numb
     }
     stampStroke(ctx, stroke, width, height);
     ctx.restore();
+  }
+
+  const previewIndices = selection.marquee ? findStrokesInRectStatic(strokes, selection.marquee, width, height) : null;
+
+  for (const index of selection.selectedIndices) {
+    const stroke = strokes[index];
+    if (!stroke) {
+      continue;
+    }
+    drawStrokeHighlight(ctx, stroke, width, height, focusColor);
+  }
+
+  if (previewIndices) {
+    for (const index of previewIndices) {
+      if (selection.selectedIndices.has(index)) {
+        continue;
+      }
+      const stroke = strokes[index];
+      if (!stroke) {
+        continue;
+      }
+      drawStrokeHighlight(ctx, stroke, width, height, focusColor, 0.12);
+    }
+  }
+
+  const union = unionBounds(selection.selectedIndices, strokes, width, height);
+  if (union) {
+    drawBoundsBox(ctx, union, focusColor, 6, false);
+  }
+
+  if (selection.marquee) {
+    drawMarquee(ctx, selection.marquee, width, height, focusColor);
   }
 }
 
@@ -641,6 +980,10 @@ function styleTag(): HTMLStyleElement {
     .nmd-ink-slider input {
       width: 72px;
     }
+    .nmd-ink-slider.disabled {
+      opacity: 0.45;
+      pointer-events: none;
+    }
     .nmd-ink-stage {
       position: relative;
       touch-action: none;
@@ -672,6 +1015,32 @@ function styleTag(): HTMLStyleElement {
     .nmd-ink-resize:hover {
       background: var(--vscode-focusBorder, #007fd4);
     }
+    .nmd-ink-error,
+    .nmd-ink-fallback {
+      border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+      border-radius: 6px;
+      background: var(--vscode-editor-background, transparent);
+      padding: 8px 10px;
+      color: var(--vscode-foreground);
+    }
+    .nmd-ink-error pre,
+    .nmd-ink-fallback pre {
+      margin: 6px 0 0;
+      font-size: 12px;
+      white-space: pre-wrap;
+      color: var(--vscode-descriptionForeground, #aaa);
+    }
+    .nmd-ink-fallback-banner {
+      font-size: 12px;
+      color: var(--vscode-inputValidation-warningForeground, #cca700);
+    }
+    .nmd-ink-fallback-canvas {
+      display: block;
+      width: 100%;
+      margin-top: 8px;
+      border: 1px solid var(--vscode-widget-border, #444);
+      border-radius: 4px;
+    }
   `;
   return style;
 }
@@ -686,4 +1055,206 @@ function clamp01(value: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function translateStroke(stroke: NmdStroke, dx: number, dy: number): NmdStroke {
+  return {
+    ...stroke,
+    points: stroke.points.map((point) => ({
+      ...point,
+      x: clamp01(point.x + dx),
+      y: clamp01(point.y + dy),
+    })),
+  };
+}
+
+function hitTestStroke(stroke: NmdStroke, nx: number, ny: number, width: number, height: number): boolean {
+  if (stroke.points.length === 0) {
+    return false;
+  }
+  const px = nx * width;
+  const py = ny * height;
+  const hitRadius = Math.max(stroke.width / 2, 4) + 8;
+  const first = stroke.points[0];
+  if (Math.hypot(px - first.x * width, py - first.y * height) <= hitRadius) {
+    return true;
+  }
+  for (let index = 1; index < stroke.points.length; index += 1) {
+    const from = stroke.points[index - 1];
+    const to = stroke.points[index];
+    if (
+      distanceToSegment(px, py, from.x * width, from.y * height, to.x * width, to.y * height) <= hitRadius
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function distanceToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  if (dx === 0 && dy === 0) {
+    return Math.hypot(px - x1, py - y1);
+  }
+  const t = clamp(((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy), 0, 1);
+  return Math.hypot(px - (x1 + dx * t), py - (y1 + dy * t));
+}
+
+function strokeBounds(
+  stroke: NmdStroke,
+  width: number,
+  height: number,
+): { x: number; y: number; w: number; h: number } | undefined {
+  if (stroke.points.length === 0) {
+    return undefined;
+  }
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const point of stroke.points) {
+    const radius = stampRadius(stroke.width, pointPressure(point));
+    const x = point.x * width;
+    const y = point.y * height;
+    minX = Math.min(minX, x - radius);
+    minY = Math.min(minY, y - radius);
+    maxX = Math.max(maxX, x + radius);
+    maxY = Math.max(maxY, y + radius);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+function normalizeRect(a: NmdPoint, b: NmdPoint): NormalizedRect {
+  return {
+    x1: Math.min(a.x, b.x),
+    y1: Math.min(a.y, b.y),
+    x2: Math.max(a.x, b.x),
+    y2: Math.max(a.y, b.y),
+  };
+}
+
+function rectsIntersect(
+  rect: NormalizedRect,
+  bounds: { x: number; y: number; w: number; h: number },
+  width: number,
+  height: number,
+): boolean {
+  const bx1 = bounds.x / width;
+  const by1 = bounds.y / height;
+  const bx2 = (bounds.x + bounds.w) / width;
+  const by2 = (bounds.y + bounds.h) / height;
+  return !(rect.x2 < bx1 || rect.x1 > bx2 || rect.y2 < by1 || rect.y1 > by2);
+}
+
+function findStrokesInRectStatic(
+  strokes: NmdStroke[],
+  rect: NormalizedRect,
+  width: number,
+  height: number,
+): Set<number> {
+  const found = new Set<number>();
+  for (let index = 0; index < strokes.length; index += 1) {
+    const bounds = strokeBounds(strokes[index], width, height);
+    if (bounds && rectsIntersect(rect, bounds, width, height)) {
+      found.add(index);
+    }
+  }
+  return found;
+}
+
+function unionBounds(
+  indices: ReadonlySet<number>,
+  strokes: NmdStroke[],
+  width: number,
+  height: number,
+): { x: number; y: number; w: number; h: number } | undefined {
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const index of indices) {
+    const bounds = strokeBounds(strokes[index], width, height);
+    if (!bounds) {
+      continue;
+    }
+    minX = Math.min(minX, bounds.x);
+    minY = Math.min(minY, bounds.y);
+    maxX = Math.max(maxX, bounds.x + bounds.w);
+    maxY = Math.max(maxY, bounds.y + bounds.h);
+  }
+  if (!Number.isFinite(minX)) {
+    return undefined;
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+function drawBoundsBox(
+  ctx: CanvasRenderingContext2D,
+  bounds: { x: number; y: number; w: number; h: number },
+  color: string,
+  padding: number,
+  dashed: boolean,
+): void {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash(dashed ? [4, 4] : []);
+  ctx.strokeRect(bounds.x - padding, bounds.y - padding, bounds.w + padding * 2, bounds.h + padding * 2);
+  ctx.restore();
+}
+
+function drawStrokeHighlight(
+  ctx: CanvasRenderingContext2D,
+  stroke: NmdStroke,
+  width: number,
+  height: number,
+  color: string,
+  alpha = 0.22,
+): void {
+  const bounds = strokeBounds(stroke, width, height);
+  if (!bounds) {
+    return;
+  }
+  const padding = 4;
+  ctx.save();
+  ctx.fillStyle = withAlpha(color, alpha);
+  ctx.fillRect(bounds.x - padding, bounds.y - padding, bounds.w + padding * 2, bounds.h + padding * 2);
+  ctx.strokeStyle = withAlpha(color, Math.min(1, alpha + 0.35));
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.strokeRect(bounds.x - padding, bounds.y - padding, bounds.w + padding * 2, bounds.h + padding * 2);
+  ctx.restore();
+}
+
+function drawMarquee(
+  ctx: CanvasRenderingContext2D,
+  rect: NormalizedRect,
+  width: number,
+  height: number,
+  color: string,
+): void {
+  const x = rect.x1 * width;
+  const y = rect.y1 * height;
+  const w = (rect.x2 - rect.x1) * width;
+  const h = (rect.y2 - rect.y1) * height;
+  ctx.save();
+  ctx.fillStyle = withAlpha(color, 0.12);
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 4]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
+}
+
+function withAlpha(color: string, alpha: number): string {
+  if (color.startsWith("#") && (color.length === 7 || color.length === 4)) {
+    const hex = color.length === 4 ? `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}` : color;
+    const r = Number.parseInt(hex.slice(1, 3), 16);
+    const g = Number.parseInt(hex.slice(3, 5), 16);
+    const b = Number.parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return `rgba(0, 127, 212, ${alpha})`;
 }
