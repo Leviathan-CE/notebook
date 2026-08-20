@@ -1,0 +1,118 @@
+{
+  "name": "nmd",
+  "displayName": "NMD Notebook",
+  "description": "Custom notebooks with markdown+LaTeX, ink drawing, and Python cells.",
+  "version": "0.1.0",
+  "publisher": "nmd",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Notebooks"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onNotebook:nmd-notebook",
+    "onCommand:nmd.newNotebook"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "notebooks": [
+      {
+        "type": "nmd-notebook",
+        "displayName": "NMD Notebook",
+        "priority": "default",
+        "selector": [
+          {
+            "filenamePattern": "*.nmd"
+          }
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "NMD Notebook",
+      "properties": {
+        "nmd.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Python executable for NMD notebooks. Empty uses the Python extension interpreter, then python3/py on PATH."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "workbench.editorAssociations": {
+        "*.nmd": "nmd-notebook"
+      },
+      "python.analysis.supportAllPythonDocuments": true
+    },
+    "notebookRenderer": [
+      {
+        "id": "nmd-ink-renderer",
+        "displayName": "NMD Ink",
+        "entrypoint": "./out/renderer/ink.js",
+        "mimeTypes": [
+          "application/x-nmd-ink"
+        ],
+        "requiresMessaging": "always"
+      }
+    ],
+    "languages": [
+      {
+        "id": "nmd-ink",
+        "aliases": [
+          "NMD Ink"
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "nmd.newNotebook",
+        "title": "NMD: New Notebook"
+      },
+      {
+        "command": "nmd.undoInk",
+        "title": "NMD: Undo Ink Stroke"
+      },
+      {
+        "command": "nmd.insertInkCell",
+        "title": "NMD: Insert Ink Cell",
+        "icon": "$(pencil)"
+      },
+      {
+        "command": "nmd.restartPython",
+        "title": "NMD: Restart Python Kernel"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "nmd.undoInk",
+        "key": "ctrl+z",
+        "mac": "cmd+z",
+        "when": "notebookType == nmd-notebook && editorLangId == nmd-ink && !editorTextFocus && !inputFocus"
+      }
+    ],
+    "menus": {
+      "notebook/toolbar": [
+        {
+          "command": "nmd.insertInkCell",
+          "when": "notebookType == nmd-notebook",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p . && tsc -p tsconfig.renderer.json && npm run bundle-renderer",
+    "bundle-renderer": "esbuild src/renderer/ink.ts --bundle --format=esm --outfile=out/renderer/ink.js",
+    "watch": "tsc -watch -p .",
+    "test": "npm run compile && node out/test-format.js",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@types/vscode-notebook-renderer": "^1.72.3",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}

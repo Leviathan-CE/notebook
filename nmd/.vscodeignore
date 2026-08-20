@@ -1,0 +1,10 @@
+.vscode/**
+src/**
+.gitignore
+tsconfig.json
+tsconfig.renderer.json
+**/*.ts
+**/*.map
+node_modules/**
+out/test-format.js
+out/test-format.js.map
