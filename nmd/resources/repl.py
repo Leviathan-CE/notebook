@@ -34,7 +34,7 @@ def run(code: str):
     error_message = None
     ok = True
     try:
-        tree = ast.parse(code, filename="<nmd>")
+        tree = ast.parse(code, filename="<imd>")
         body = tree.body
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             if body and isinstance(body[-1], ast.Expr):
@@ -43,13 +43,18 @@ def run(code: str):
                 ast.fix_missing_locations(preamble)
                 ast.fix_missing_locations(last)
                 if preamble.body:
-                    exec(compile(preamble, "<nmd>", "exec"), NS)
-                value = eval(compile(last, "<nmd>", "eval"), NS)
+                    exec(compile(preamble, "<imd>", "exec"), NS)
+                value = eval(compile(last, "<imd>", "eval"), NS)
                 if value is not None:
-                    result = repr(value)
-                    NS["_"] = value
+                    if isinstance(value, Warning):
+                        import warnings as warn_mod
+
+                        warn_mod.showwarning(str(value), type(value), "<imd>", 1, file=stderr)
+                    else:
+                        result = repr(value)
+                        NS["_"] = value
             else:
-                exec(compile(tree, "<nmd>", "exec"), NS)
+                exec(compile(tree, "<imd>", "exec"), NS)
     except Exception:
         ok = False
         formatted = _format_cell_error()
@@ -74,7 +79,7 @@ def _format_cell_error():
     message = "" if exc is None else str(exc)
     cell_tb = _skip_internal_frames(tb)
     text = "".join(traceback.format_exception(exc_type, exc, cell_tb))
-    text = text.replace('File "<nmd>"', 'File "<cell>"')
+    text = text.replace('File "<imd>"', 'File "<cell>"')
     return {
         "error": text.rstrip() + "\n",
         "errorName": name,
@@ -86,7 +91,7 @@ def _skip_internal_frames(tb):
     repl = os.path.abspath(__file__)
     while tb is not None:
         filename = tb.tb_frame.f_code.co_filename
-        if filename == "<nmd>":
+        if filename == "<imd>":
             return tb
         if os.path.basename(filename) == "repl.py":
             tb = tb.tb_next

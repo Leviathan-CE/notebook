@@ -15,7 +15,7 @@ export async function exportActiveNotebookToPdf(): Promise<void> {
 
   const notebook = notebookFromDocument(editor.notebook);
   const baseName = path.basename(editor.notebook.uri.fsPath, path.extname(editor.notebook.uri.fsPath));
-  const defaultUri = vscode.Uri.file(editor.notebook.uri.fsPath.replace(/\.nmd$/i, ".pdf"));
+  const defaultUri = vscode.Uri.file(editor.notebook.uri.fsPath.replace(/\.imd$/i, ".pdf"));
 
   const target = await vscode.window.showSaveDialog({
     defaultUri,
@@ -71,7 +71,7 @@ export async function exportNotebookFileToPdf(uri: vscode.Uri): Promise<void> {
   const bytes = await vscode.workspace.fs.readFile(uri);
   const notebook = parseNotebook(bytes);
   const baseName = path.basename(uri.fsPath, path.extname(uri.fsPath));
-  const target = vscode.Uri.file(uri.fsPath.replace(/\.nmd$/i, ".pdf"));
+  const target = vscode.Uri.file(uri.fsPath.replace(/\.imd$/i, ".pdf"));
   await exportNotebookToPdf(notebook, target.fsPath, baseName || "Notebook");
   await vscode.window.showInformationMessage(`Exported PDF to ${target.fsPath}`);
 }

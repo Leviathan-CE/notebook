@@ -25,7 +25,7 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.nmd"
+            "filenamePattern": "*.imd"
           }
         ]
       }
@@ -42,7 +42,7 @@
     },
     "configurationDefaults": {
       "workbench.editorAssociations": {
-        "*.nmd": "nmd-notebook"
+        "*.imd": "nmd-notebook"
       },
       "python.analysis.supportAllPythonDocuments": true
     },

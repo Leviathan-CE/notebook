@@ -10,7 +10,7 @@
     {
       "id": "hello-md",
       "type": "markdown",
-      "source": "# NMD notes\n\nMarkdown is the first block type. LaTeX is **not** a separate block — it is syntax inside markdown, rendered by the editor's built-in KaTeX.\n\nInline: the mass–energy relation is $E=mc^2$.\n\nDisplay:\n\n$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$\n\n- Run **NMD: New Notebook** to create another file\n- Use **NMD: Insert Ink Cell** (pencil on the notebook toolbar) for a drawing block\n- Press **F5** (Run Extension) so `.nmd` opens as a notebook, not raw JSON"
+      "source": "# NMD notes\n\nMarkdown is the first block type. LaTeX is **not** a separate block — it is syntax inside markdown, rendered by the editor's built-in KaTeX.\n\nInline: the mass–energy relation is $E=mc^2$.\n\nDisplay:\n\n$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$\n\n- Run **NMD: New Notebook** to create another file\n- Use **NMD: Insert Ink Cell** (pencil on the notebook toolbar) for a drawing block\n- Press **F5** (Run Extension) so `.imd` opens as a notebook, not raw JSON"
     },
     {
       "id": "hello-ink",

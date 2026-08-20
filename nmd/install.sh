@@ -42,4 +42,4 @@ else
 fi
 
 echo "==> Done. Reload the window (Ctrl+Shift+P → Developer: Reload Window) if NMD is already loaded."
-echo "    Then open a .nmd file or run: NMD: New Notebook"
+echo "    Then open a .imd file or run: NMD: New Notebook"

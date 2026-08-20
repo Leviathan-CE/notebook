@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { coerceInkSource, parseInkSource, parseNotebook, stringifyNotebook } from "./format";
+import { colorizeStderrAnsi, formatPythonTracebackHtml, isWarningRepr } from "./format-python-error";
 import {
   NMD_INK_CELL_STUB,
   NMD_INK_LANGUAGE,
@@ -154,26 +155,40 @@ export function pythonOutputs(output?: NmdPythonOutput): vscode.NotebookCellOutp
   }
 
   const items: vscode.NotebookCellOutputItem[] = [];
+  const outputs: vscode.NotebookCellOutput[] = [];
+
   if (output.stdout) {
     items.push(vscode.NotebookCellOutputItem.stdout(output.stdout));
   }
-  if (output.stderr) {
-    items.push(vscode.NotebookCellOutputItem.stderr(output.stderr));
-  }
   if (output.result) {
-    items.push(vscode.NotebookCellOutputItem.text(output.result, "text/plain"));
-  }
-  if (output.error) {
-    items.push(
-      vscode.NotebookCellOutputItem.error({
-        name: output.errorName || "Error",
-        message: output.errorMessage || "",
-        stack: output.error,
-      }),
-    );
+    if (isWarningRepr(output.result)) {
+      const colored = colorizeStderrAnsi(`${output.result}\n`);
+      if (colored) {
+        outputs.push(new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stderr(colored)]));
+      }
+    } else {
+      items.push(vscode.NotebookCellOutputItem.text(output.result, "text/plain"));
+    }
   }
   for (const image of output.images ?? []) {
     items.push(new vscode.NotebookCellOutputItem(Buffer.from(image, "base64"), "image/png"));
   }
-  return items.length > 0 ? [new vscode.NotebookCellOutput(items)] : [];
+
+  if (items.length > 0) {
+    outputs.unshift(new vscode.NotebookCellOutput(items));
+  }
+
+  if (output.stderr) {
+    const colored = colorizeStderrAnsi(output.stderr);
+    if (colored) {
+      outputs.push(new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stderr(colored)]));
+    }
+  }
+
+  if (output.error) {
+    const html = formatPythonTracebackHtml(output);
+    outputs.push(new vscode.NotebookCellOutput([new vscode.NotebookCellOutputItem(Buffer.from(html, "utf8"), "text/html")]));
+  }
+
+  return outputs;
 }

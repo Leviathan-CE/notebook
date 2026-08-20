@@ -44,7 +44,7 @@ function pickNmdEditor(): vscode.NotebookEditor | undefined {
 
 async function openVisibleNmdNotebook(): Promise<vscode.NotebookEditor | undefined> {
   const activeUri = vscode.window.activeTextEditor?.document.uri;
-  if (activeUri?.fsPath.toLowerCase().endsWith(".nmd")) {
+  if (activeUri?.fsPath.toLowerCase().endsWith(".imd")) {
     const existing = vscode.workspace.notebookDocuments.find(
       (document) =>
         document.notebookType === NMD_NOTEBOOK_TYPE && document.uri.toString() === activeUri.toString(),

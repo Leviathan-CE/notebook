@@ -82,6 +82,7 @@ export function notebookToHtml(notebook: NmdNotebook, title: string): string {
       margin-top: 8px;
     }
     .python-output.error { color: #c62828; }
+    .python-output.warning { color: #e5a100; }
     .python-images {
       display: flex;
       flex-wrap: wrap;
@@ -144,7 +145,7 @@ function renderPython(source: string, output?: NmdPythonOutput): string {
     parts.push(`<pre class="python-output">${escapeHtml(output.stdout)}</pre>`);
   }
   if (output.stderr) {
-    parts.push(`<pre class="python-output error">${escapeHtml(output.stderr)}</pre>`);
+    parts.push(`<pre class="python-output warning">${escapeHtml(output.stderr)}</pre>`);
   }
   if (output.result) {
     parts.push(`<pre class="python-output">${escapeHtml(output.result)}</pre>`);

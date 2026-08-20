@@ -1,12 +1,12 @@
 # NMD Notebook
 
-A Cursor / VS Code extension for `.nmd` notebooks with:
+A Cursor / VS Code extension for `.imd` notebooks with:
 
 - **Markdown** cells (including LaTeX)
 - **Python** cells
 - **Ink** cells (pen, eraser, marquee select, move strokes)
 
-Notebooks are plain JSON files with the `.nmd` extension.
+Notebooks are plain JSON files with the `.imd` extension.
 
 ## Requirements
 
@@ -81,7 +81,7 @@ Changes to TypeScript require recompiling (`npm run compile`) or using the watch
 ## Getting started
 
 1. **New notebook:** Command Palette → **NMD: New Notebook**
-2. **Open existing:** open any `.nmd` file (for example `examples/hello.nmd`)
+2. **Open existing:** open any `.imd` file (for example `examples/hello.imd`)
 3. **Add cells:** use the top-row **Code**, **Markdown**, and **Add Ink** buttons
 
 ### Ink cells
@@ -126,7 +126,7 @@ If no browser is found, the extension saves an `.html` file next to your chosen 
 - Run **Developer: Reload Window**
 - Confirm the VSIX installed: Extensions view → search `@installed nmd`
 
-**`.nmd` opens as raw JSON**
+**`.imd` opens as raw JSON**
 
 - The extension is not active. Reinstall and reload.
 
@@ -150,7 +150,7 @@ If no browser is found, the extension saves an `.html` file next to your chosen 
 nmd/
   src/           TypeScript source
   out/           Compiled extension (generated)
-  examples/      Sample .nmd notebooks
+  examples/      Sample .imd notebooks
   resources/     Python REPL used by code cells
   install.sh     Build + install script
 ```
