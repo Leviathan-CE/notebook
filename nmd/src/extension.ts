@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 import { insertInkCell, registerInkRuntime } from "./controller";
+import { exportActiveNotebookToPdf } from "./export-pdf/export-notebook.js";
 import { emptyNotebook } from "./format";
+import { resolveNmdEditor } from "./resolve-nmd-editor.js";
 import { NmdSerializer, toNotebookCell } from "./serializer";
 import { NMD_NOTEBOOK_TYPE } from "./types";
 
@@ -34,16 +36,23 @@ export function activate(context: vscode.ExtensionContext): void {
         await insertInkCell(editor);
       }
     }),
+    vscode.commands.registerCommand("nmd.exportPdf", async () => {
+      try {
+        await exportActiveNotebookToPdf();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await vscode.window.showErrorMessage(`PDF export failed: ${message}`);
+      }
+    }),
   );
 
   registerInkRuntime(context);
 }
 
 async function requireNmdEditor(): Promise<vscode.NotebookEditor | undefined> {
-  const editor = vscode.window.activeNotebookEditor;
-  if (!editor || editor.notebook.notebookType !== NMD_NOTEBOOK_TYPE) {
+  const editor = await resolveNmdEditor(true);
+  if (!editor) {
     await vscode.window.showWarningMessage("Open an NMD notebook first.");
-    return undefined;
   }
   return editor;
 }

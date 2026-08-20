@@ -32,6 +32,8 @@ export class PythonSession {
       stderr: asOptionalString(parsed.stderr),
       result: asOptionalString(parsed.result),
       error: asOptionalString(parsed.error),
+      errorName: asOptionalString(parsed.errorName),
+      errorMessage: asOptionalString(parsed.errorMessage),
       images: Array.isArray(parsed.images) ? parsed.images.filter((item): item is string => typeof item === "string") : undefined,
     };
   }

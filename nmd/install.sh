@@ -12,7 +12,7 @@ echo "==> Compiling TypeScript + bundling the ink renderer"
 npm run compile
 
 echo "==> Packaging .vsix"
-npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository
+npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links
 
 NAME="$(node -p "require('./package.json').name")"
 VERSION="$(node -p "require('./package.json').version")"

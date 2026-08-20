@@ -190,6 +190,12 @@ function normalizePythonOutput(output: unknown): NmdPythonOutput | undefined {
   if (typeof value.error === "string" && value.error.length > 0) {
     next.error = value.error;
   }
+  if (typeof value.errorName === "string" && value.errorName.length > 0) {
+    next.errorName = value.errorName;
+  }
+  if (typeof value.errorMessage === "string" && value.errorMessage.length > 0) {
+    next.errorMessage = value.errorMessage;
+  }
   if (Array.isArray(value.images)) {
     const images = value.images.filter((item): item is string => typeof item === "string" && item.length > 0);
     if (images.length > 0) {

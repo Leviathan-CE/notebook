@@ -3,6 +3,7 @@ import base64
 import contextlib
 import io
 import json
+import os
 import sys
 import traceback
 
@@ -29,6 +30,8 @@ def run(code: str):
     stderr = io.StringIO()
     result = None
     error = None
+    error_name = None
+    error_message = None
     ok = True
     try:
         tree = ast.parse(code, filename="<nmd>")
@@ -49,15 +52,53 @@ def run(code: str):
                 exec(compile(tree, "<nmd>", "exec"), NS)
     except Exception:
         ok = False
-        error = traceback.format_exc()
+        formatted = _format_cell_error()
+        error = formatted["error"]
+        error_name = formatted["errorName"]
+        error_message = formatted["errorMessage"]
     return {
         "ok": ok,
         "stdout": stdout.getvalue(),
         "stderr": stderr.getvalue(),
         "result": result,
         "error": error,
+        "errorName": error_name,
+        "errorMessage": error_message,
         "images": _capture_plots(),
     }
+
+
+def _format_cell_error():
+    exc_type, exc, tb = sys.exc_info()
+    name = getattr(exc_type, "__name__", "Error") if exc_type else "Error"
+    message = "" if exc is None else str(exc)
+    cell_tb = _skip_internal_frames(tb)
+    text = "".join(traceback.format_exception(exc_type, exc, cell_tb))
+    text = text.replace('File "<nmd>"', 'File "<cell>"')
+    return {
+        "error": text.rstrip() + "\n",
+        "errorName": name,
+        "errorMessage": message,
+    }
+
+
+def _skip_internal_frames(tb):
+    repl = os.path.abspath(__file__)
+    while tb is not None:
+        filename = tb.tb_frame.f_code.co_filename
+        if filename == "<nmd>":
+            return tb
+        if os.path.basename(filename) == "repl.py":
+            tb = tb.tb_next
+            continue
+        try:
+            if os.path.abspath(filename) == repl:
+                tb = tb.tb_next
+                continue
+        except (OSError, ValueError):
+            pass
+        return tb
+    return tb
 
 
 def _line_prefix(code: str, line: int, column: int) -> str:

@@ -13,7 +13,8 @@
   "activationEvents": [
     "onStartupFinished",
     "onNotebook:nmd-notebook",
-    "onCommand:nmd.newNotebook"
+    "onCommand:nmd.newNotebook",
+    "onCommand:nmd.exportPdf"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -74,6 +75,10 @@
         "title": "NMD: Undo Ink Stroke"
       },
       {
+        "command": "nmd.deleteInkSelection",
+        "title": "NMD: Delete Selected Ink"
+      },
+      {
         "command": "nmd.insertInkCell",
         "title": "Add Ink",
         "icon": "$(add)"
@@ -89,6 +94,11 @@
       {
         "command": "nmd.restartPython",
         "title": "NMD: Restart Python Kernel"
+      },
+      {
+        "command": "nmd.exportPdf",
+        "title": "NMD: Export to PDF",
+        "icon": "$(export)"
       }
     ],
     "keybindings": [
@@ -97,6 +107,16 @@
         "key": "ctrl+z",
         "mac": "cmd+z",
         "when": "notebookType == nmd-notebook && editorLangId == nmd-ink && !editorTextFocus && !inputFocus"
+      },
+      {
+        "command": "nmd.deleteInkSelection",
+        "key": "delete",
+        "when": "notebookType == nmd-notebook && notebookOutputFocused && editorLangId == nmd-ink"
+      },
+      {
+        "command": "nmd.deleteInkSelection",
+        "key": "backspace",
+        "when": "notebookType == nmd-notebook && notebookOutputFocused && editorLangId == nmd-ink"
       }
     ],
     "menus": {
@@ -119,6 +139,11 @@
           "command": "nmd.insertInkCell",
           "when": "notebookType == nmd-notebook && notebookEditable",
           "group": "navigation/add@2"
+        },
+        {
+          "command": "nmd.exportPdf",
+          "when": "notebookType == nmd-notebook",
+          "group": "navigation@99"
         }
       ],
       "commandPalette": [

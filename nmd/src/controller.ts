@@ -57,6 +57,21 @@ export function registerInkRuntime(context: vscode.ExtensionContext): vscode.Not
       }
       await messaging.postMessage({ type: "ink-undo", cellId }, editor);
     }),
+    vscode.commands.registerCommand("nmd.deleteInkSelection", async () => {
+      const editor = vscode.window.activeNotebookEditor;
+      if (!editor || editor.notebook.notebookType !== NMD_NOTEBOOK_TYPE) {
+        return;
+      }
+      const cell = editor.notebook.cellAt(editor.selection.start);
+      if (cell.document.languageId !== NMD_INK_LANGUAGE) {
+        return;
+      }
+      const cellId = cellNmdId(cell);
+      if (!cellId) {
+        return;
+      }
+      await messaging.postMessage({ type: "ink-delete-selection", cellId }, editor);
+    }),
     registerPythonCompletions((notebook) => sessionFor(context, notebook)),
     vscode.commands.registerCommand("nmd.restartPython", async () => {
       const editor = vscode.window.activeNotebookEditor;
@@ -208,6 +223,8 @@ async function executePythonCell(
       stderr: result.stderr || undefined,
       result: result.result || undefined,
       error: result.error || undefined,
+      errorName: result.errorName || undefined,
+      errorMessage: result.errorMessage || undefined,
       images: result.images && result.images.length > 0 ? result.images : undefined,
     };
     const cellId = cellNmdId(cell) ?? crypto.randomUUID();

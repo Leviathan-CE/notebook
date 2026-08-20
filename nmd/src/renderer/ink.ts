@@ -6,7 +6,7 @@ import {
   NMD_INK_MIN_HEIGHT_PX,
   remapInkStrokesY,
 } from "../format";
-import { isInkUndoMessage, type NmdInkSource, type NmdPoint, type NmdStroke, type NmdTool } from "../types";
+import { isInkDeleteSelectionMessage, isInkUndoMessage, type NmdInkSource, type NmdPoint, type NmdStroke, type NmdTool } from "../types";
 
 type ActiveTool = NmdTool | "select";
 type SelectMode = "idle" | "marquee" | "move";
@@ -40,15 +40,22 @@ const PEN_SIZE_MAX = 48;
 const ERASER_SIZE_MIN = 4;
 const ERASER_SIZE_MAX = 80;
 const MARQUEE_MIN_SIZE = 0.006;
+const INK_CLIPBOARD_MIME = "application/x-nmd-ink-strokes";
+
+let inkStrokeClipboard: NmdStroke[] | null = null;
 
 export const activate: ActivationFunction = (context) => {
   const undoByCell = new Map<string, () => void>();
+  const deleteSelectionByCell = new Map<string, () => void>();
 
   context.onDidReceiveMessage?.((message) => {
-    if (!isInkUndoMessage(message)) {
+    if (isInkUndoMessage(message)) {
+      undoByCell.get(message.cellId)?.();
       return;
     }
-    undoByCell.get(message.cellId)?.();
+    if (isInkDeleteSelectionMessage(message)) {
+      deleteSelectionByCell.get(message.cellId)?.();
+    }
   });
 
   return {
@@ -67,14 +74,15 @@ export const activate: ActivationFunction = (context) => {
       }
 
       try {
-        const undo = mountCanvas(element, payload, (source) => {
+        const handlers = mountCanvas(element, payload, (source) => {
           context.postMessage?.({
             type: "ink-update",
             cellId: payload.id,
             source,
           });
         });
-        undoByCell.set(payload.id, undo);
+        undoByCell.set(payload.id, handlers.undo);
+        deleteSelectionByCell.set(payload.id, handlers.deleteSelection);
       } catch (error) {
         renderInkFallback(element, payload, error);
       }
@@ -142,7 +150,11 @@ function renderInkFallback(element: HTMLElement, payload: InkPayload, error: unk
   draw();
 }
 
-function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source: NmdInkSource) => void): () => void {
+function mountCanvas(
+  element: HTMLElement,
+  payload: InkPayload,
+  persist: (source: NmdInkSource) => void,
+): { undo: () => void; deleteSelection: () => void } {
   element.innerHTML = "";
 
   const root = document.createElement("div");
@@ -567,7 +579,7 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
     activePointerId = event.pointerId;
     current = {
       tool,
-      color: resolveColor(colorKey),
+      color: colorKey,
       width: currentSize(),
       points: [pointFromEvent(event)],
     };
@@ -637,6 +649,51 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
   resizeHandle.addEventListener("pointerup", endResize);
   resizeHandle.addEventListener("pointercancel", endResize);
 
+  const deleteSelection = () => {
+    if (selectedIndices.size === 0) {
+      return;
+    }
+    if (current) {
+      current = undefined;
+      activePointerId = undefined;
+      stopStrokeTracking();
+    }
+    if (selectMode !== "idle") {
+      resetSelectInteraction();
+    }
+    strokes = strokes.filter((_, index) => !selectedIndices.has(index));
+    selectedIndices = new Set();
+    size();
+    emit();
+  };
+
+  const copySelection = () => {
+    if (selectedIndices.size === 0) {
+      return;
+    }
+    inkStrokeClipboard = [...selectedIndices]
+      .sort((a, b) => a - b)
+      .map((index) => structuredClone(strokes[index]));
+    void navigator.clipboard
+      ?.writeText(JSON.stringify({ mime: INK_CLIPBOARD_MIME, strokes: inkStrokeClipboard }))
+      .catch(() => undefined);
+  };
+
+  const pasteSelection = () => {
+    if (!inkStrokeClipboard || inkStrokeClipboard.length === 0) {
+      return;
+    }
+    const offset = 0.03;
+    const pasted = inkStrokeClipboard.map((stroke) => translateStroke(structuredClone(stroke), offset, offset));
+    const startIndex = strokes.length;
+    strokes = [...strokes, ...pasted];
+    selectedIndices = new Set(pasted.map((_, index) => startIndex + index));
+    setTool("select");
+    canvas.style.cursor = "crosshair";
+    size();
+    emit();
+  };
+
   const undoLast = () => {
     if (strokes.length === 0) {
       return;
@@ -655,20 +712,44 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
     emit();
   };
 
-  const onUndoKey = (event: KeyboardEvent) => {
-    if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) {
+  const onInkKey = (event: KeyboardEvent) => {
+    const key = event.key.toLowerCase();
+    if (key === "delete" || key === "backspace") {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteSelection();
       return;
     }
-    if (event.key.toLowerCase() !== "z") {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) {
       return;
     }
-    event.preventDefault();
-    event.stopPropagation();
-    undoLast();
+    if (key === "c") {
+      if (selectedIndices.size === 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      copySelection();
+      return;
+    }
+    if (key === "v") {
+      if (!inkStrokeClipboard || inkStrokeClipboard.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      pasteSelection();
+      return;
+    }
+    if (key === "z" && !event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      undoLast();
+    }
   };
 
-  canvas.addEventListener("keydown", onUndoKey);
-  stage.addEventListener("keydown", onUndoKey);
+  canvas.addEventListener("keydown", onInkKey);
+  stage.addEventListener("keydown", onInkKey);
 
   penButton.addEventListener("click", () => setToolAndCursor("pen"));
   eraserButton.addEventListener("click", () => setToolAndCursor("eraser"));
@@ -707,10 +788,22 @@ function mountCanvas(element: HTMLElement, payload: InkPayload, persist: (source
 
   const observer = new ResizeObserver(() => size());
   observer.observe(root);
+
+  let lastThemeInk = resolveColor("theme");
+  const themeObserver = new MutationObserver(() => {
+    const nextThemeInk = resolveColor("theme");
+    if (nextThemeInk !== lastThemeInk) {
+      lastThemeInk = nextThemeInk;
+      size();
+    }
+  });
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
+  themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class", "style"] });
+
   setToolAndCursor("pen");
   setColor("theme");
   size();
-  return undoLast;
+  return { undo: undoLast, deleteSelection };
 }
 
 function redraw(
@@ -735,7 +828,7 @@ function redraw(
       ctx.fillStyle = "rgba(0,0,0,1)";
     } else {
       ctx.globalCompositeOperation = "source-over";
-      ctx.fillStyle = stroke.color;
+      ctx.fillStyle = resolveColor(stroke.color);
     }
     stampStroke(ctx, stroke, width, height);
     ctx.restore();

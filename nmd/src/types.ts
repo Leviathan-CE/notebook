@@ -38,6 +38,8 @@ export interface NmdPythonOutput {
   result?: string;
   images?: string[];
   error?: string;
+  errorName?: string;
+  errorMessage?: string;
 }
 
 export interface NmdPythonCell {
@@ -90,6 +92,11 @@ export interface InkUndoMessage {
   cellId: string;
 }
 
+export interface InkDeleteSelectionMessage {
+  type: "ink-delete-selection";
+  cellId: string;
+}
+
 export function isInkUpdateMessage(value: unknown): value is InkUpdateMessage {
   if (!value || typeof value !== "object") {
     return false;
@@ -104,6 +111,14 @@ export function isInkUndoMessage(value: unknown): value is InkUndoMessage {
   }
   const message = value as InkUndoMessage;
   return message.type === "ink-undo" && typeof message.cellId === "string";
+}
+
+export function isInkDeleteSelectionMessage(value: unknown): value is InkDeleteSelectionMessage {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const message = value as InkDeleteSelectionMessage;
+  return message.type === "ink-delete-selection" && typeof message.cellId === "string";
 }
 
 export function emptyInkSource(): NmdInkSource {

@@ -164,7 +164,13 @@ export function pythonOutputs(output?: NmdPythonOutput): vscode.NotebookCellOutp
     items.push(vscode.NotebookCellOutputItem.text(output.result, "text/plain"));
   }
   if (output.error) {
-    items.push(vscode.NotebookCellOutputItem.error({ name: "PythonError", message: output.error }));
+    items.push(
+      vscode.NotebookCellOutputItem.error({
+        name: output.errorName || "Error",
+        message: output.errorMessage || "",
+        stack: output.error,
+      }),
+    );
   }
   for (const image of output.images ?? []) {
     items.push(new vscode.NotebookCellOutputItem(Buffer.from(image, "base64"), "image/png"));
